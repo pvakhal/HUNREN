@@ -1,0 +1,502 @@
+---
+title: "Bevezetés a gépi tanulásba"
+author: "Vakhal Péter"
+date: '2024-09-19'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Adatok betöltése
+
+```{r}
+adat<-read.csv(url("https://raw.githubusercontent.com/pvakhal/HUNREN/main/data.csv"), sep=",", dec=".")
+```
+
+Helyes adattípusok kialakítása
+```{r warning=FALSE}
+library(dplyr)
+adat<-type.convert(adat)
+adat<-adat %>%
+  mutate_if(is.integer, as.factor)
+adat$tanarok_szama<-as.numeric(adat$tanarok_szama)
+adat$tanarok_szama_telephelyen<-as.numeric(adat$tanarok_szama_telephelyen)
+adat$diak_osszletszam<-as.numeric(adat$diak_osszletszam)
+adat$diak_osszletszama_telephelyen<-as.numeric(adat$diak_osszletszama_telephelyen)
+```
+
+# Csomagok betöltése
+
+```{r}
+library(MASS)
+library(ggplot2)
+library(klaR)
+library(cluster)
+library(factoextra)
+library(class)
+library(e1071)
+library(glmnet)
+```
+
+Az adatok az Oktatási Hivatal 2019-es országos kompetenciafelméréseinek részeredményeit tartalmazza. Az adatbázis korlátozottan nyilvános, jelen oktatási kurzus keretében használható, egyéb esetben az adatgazda engedélye szükséges (a mindenkori Oktatási Hivatal). A A változók jelentését tartalmazó fájl külön kerül bemutatásra.
+
+# Lineáris diszkriminancia elemzés (LDA)
+
+A lineáris diszkriminancia elemzés célja, hogy egy már létező kategóriarendszer lehetséges besorolási szabályaira becslést adjunk úgy, hogy későbbiekben nem kategorizált egyedeket be lehessen sorolni. A modellt az 1920-as években dolgozták ki, ezzel az egyik legelső gépi tanulási algoritmusnak számít. Mivel a csoportbasorolások eleve adottak, így a módszer a felügyelt tanuló algoritmusok közé tartozik.
+
+Az eljárás már két kategória esetén is elvégezhető, de igazán a $k>2$ esetben mutatkozik meg az ereje.
+
+Legyen *j* csoport egy populációban: $\Pi_1, \Pi_2, \dots, \Pi_3$. Feladatunk eldönteni egy új *x* megfigyelésről a birtokunkban lévő ismert adatok alapján, hogy legnagyobb eséllyel mely csoportba tartozhat. A *diszkrimináló szabály* egy olyan szeparáció, amely a teret *j* darab altérre osztja ($R_j$) és amelyre igaz, hogy $x \in R_j$. Célfüggvényünk, hogy a klasszifikációs hibát minimalizáljuk.
+
+Jelölje $\Pi_j$ egy tetszőleges változó sűrűségfüggvényét $f_j(x)$. A *maximális diszkrimináló szabályt* akkor kapjuk, ha *x*-et be tudjuk sorolni $\Pi_j$ kategóriába úgy, hogy az oda tartozás likelihood értékét maximalizáljuk, azaz $L_j(x)=f_j(x)=\max_i f_i(x)$.
+
+Formailag az $R_j$ szeparált altér a következő:
+
+$$
+R_j=\{x:L_j(x)>L_i(x) \quad \forall i \neq j \}
+$$
+
+Azáltal, hogy egy elemet egy kategóriába besorolunk hibát véthetünk. Az egyszerűség kedvéért legyen két kategóriánk. Ekkor annak kockázata ("risk"), hogy egy elemet félreklasszifikálunk, a következő:
+
+$$
+p_{21}=P(X \in R_2 | \Pi_1) = \int_{R_2} f_1(x)dx
+$$
+
+A $p_{12}$ besorolási hiba valószínűsége a fenti analógiájára megadható. A klasszifikációs hibának költsége van, ami a következő: $C(i|j)$, ha egy $\Pi_i$ populációhoz tartozó elem az $R_j$ altérbe lett sorolva.
+
+A következő költségmátrix ennek implikációja:
+
+![](https://raw.githubusercontent.com/pvakhal/tsm/main/discriminant/discr1.PNG)
+
+Most tegyük fel, hogy létezik $\pi_i$ apriori besorolási valószínűség (mielőtt még bármilyen információt tudnánk az egyedről) arra vonatkozóan, hogy egy tetszőlegesen kiválasztott $x_i$ elem a $\Pi_i$ csoportba tartozik. Ez implikálja a következő költségfüggvényt (*"Expected cost of misclassification"*) két kategóriás esetben:
+
+$$
+ECM=C(2|1)p_{21}\pi_1+C(1|2)p_{12}\pi_2
+$$
+
+Ez egyben a célfüggvényünk is, amit minimalizálni szeretnénk. Két kategória esetén a diszkrimináló függvény a következő:
+
+$$
+R_1=\left\{ x: \frac {f_1(x)} {f_2(x)} \geq \right(\frac {C(1|2)} {C(2|1)}\left) \left(\frac {\pi_2} {\pi_1} \right) \right\} \\
+
+R_2=\left\{ x: \frac {f_1(x)} {f_2(x)} < \right(\frac {C(1|2)} {C(2|1)}\left) \left(\frac {\pi_2} {\pi_1} \right) \right\}
+$$
+
+Az egyszerűség kedvéért most feltételezzük, hogy a prior valószínűségek azonosak, továbbá hogy két kategória esetén mindkét eloszlás normális.
+
+$$
+\Pi_1: \mathcal{N}(0,\sigma_1^2) \\
+\Pi_2: \mathcal{N}(0, \sigma_2^2)
+$$
+
+Ekkor annak a likelihood függvénye, hogy $x \in \Pi_i$ a következő:
+
+$$
+L_i(x)=2(\pi \sigma_i^2)^{-1/2} \text{exp} \left\{ -1/2\times (\frac {x_i-\mu_i} {\sigma_i})\right\}
+$$
+
+Vagyis *x* $\Pi_1$-be lesz sorolva, ha $L_1(x) \geq L_2(x)$.
+
+![](https://raw.githubusercontent.com/pvakhal/tsm/main/discriminant/discr2.PNG)
+
+A probléma leegyszerűsödik, hogy a varianciákat azonosnak tételezzük fel:
+
+$$
+x \to \Pi_1 \quad if \quad x \in R_1=\{x:x \leq 1/2(\mu_1+\mu_2)\} \\
+x \to \Pi_2 \quad if \quad x \in R_2=\{x:x > 1/2(\mu_1+\mu_2)\}
+$$
+
+
+A gyakorlatban ezt sokszor feltételezzük, és teszteljük is homogenitási vizsgálatokkal, ugyanakkor ez a feltétel csak ritkán teljesül. Szintén ritkán teljesül a normalitási feltétel is. Ezeket a próbákat itt most nem részletezzük, de alkalmazzuk őket.
+
+# A kutatási kérdés rövid bemutatása
+
+Az adatbázis **matek_8** elnevezési változója tartalmazza, hogy a diákok által elért matematika pontszám mely kvartilisbe esik:
+
+```{r}
+table(adat$matek_8)
+```
+
+Vizsgáljuk meg, hogy vajon mi befolyásolhatja a különböző csoportokba való tartozás esélyét!
+Használjuk a következő változókat (nincs mögötte tudományos érv):
+
+* teltip7_th: településtipus, telephely
+* t28: tanuló édesanyjának/nevelőanyjának legmagasabb iskolai végzettsége
+* t29: tanuló édesapjának/nevelőapjának legmagasabb iskolai végzettsége
+* t36: tanuló családjában a könyvek száma
+* t5_a: tanuló osztályt ismételt: ált. Isk. 1-4. évf.
+* t39: tanuló családja más családokkal összehasonlítva mennyire él jól
+* t40b: tanuló családjában: a család megbeszéli az iskolában történteket
+* t40c: tanuló családjában: a család beszélget arról, amit a tanuló éppen olvas
+* t41: tanuló szülei az elmúlt években milyen gyakran mentek szülői értekezletre
+* t48: tanuló szerint a környéken élő családok milyen körülmények között élnek
+* t55_a: tanuló jár különórákra, magánórákra az iskolán kívül: matematika
+* csh_index: tanuló standard családiháttér-indexe
+* sex: tanuló neme
+* hhh: tanuló halmozottan hátrányos helyzetű-e
+
+Csak egy folytonos változónk van, vizsgáljuk meg a normalitását.
+
+```{r}
+ggplot(data=adat, aes(x=csh_index, group=matek_8, fill=matek_8)) + geom_density(adjust=1.5) +
+facet_wrap(~matek_8)
+```
+Látható, hogy a legjobb teljesítményt nyújtó csoportban a családi háttér is messze a legjobb, sőt esetükben szinte kizárt az, hogy rossz csh indexe legyen a diáknak.
+
+Vizsgáljuk meg a családi háttér index kiugró értékeit is (ha vannak):
+
+```{r}
+ggplot(data=adat, aes(x=as.factor(matek_8), y=csh_index)) + geom_boxplot()
+```
+
+Az első kategóriában nincsenek kiugró értéket, ugyanakkor minél feljebb lépünk a matematika eredményekben annál ritkábbnak számít, ha a családi háttér rossz, ezért ők kiugró értéknek számítanak. Kezelhetjük őket logritmizálással, de nem muszáj, ők jó eséllyel félre lesznek klasszifikálva.
+
+## Modellépítés
+
+Építsük meg a modellünket:
+
+```{r}
+lda_model<-lda(matek_8~teltip7_th+t28+t29+csh_index+sex+hhh+t36+t5a+t39+t40b+t40c+t41+t48+t55a, data=adat)
+```
+
+
+Vizsgáljuk meg a modell objektumunkat:
+
+```{r}
+lda_model$prior
+```
+
+Látható, hogy a prior valószínűségek azonosak voltak, ami nem meglepő, mivel a kvartilisek elemszáma törvényszerűen azonos. A prior valószínűségek mindig a relatív gyakoriságokból számolódnak, nem érdemes azonban úgy hagyni őket, mivel a prior értékek nagyban befolyásolják a posterior becslést (a bayes-tétel miatt). Általánosságban az a legjobb, ha azonosnak feltételezzük a priorokat, ezzel adjuk a legkevesebb torzítást a modellnek.
+
+```{r}
+lda_model$svd
+```
+
+Az SVD felbontás eredményei, amit úgy értelmezhetünk, mint a sajátértékeket egy főkomponens elemzésben. Megmutatják, hogy a modellek a variancia mekkora részét magyarázzák:
+
+```{r}
+lda_model$svd^2 / sum(lda_model$svd^2)
+```
+
+A diszkriminancia függvények mindig fontossági sorrendet követnek, vagyis nem meglepetés, hogy az első a legjobb. A második függvény már csupán 5%-ot magyaráz, a harmadik meg szinte semmit.
+
+Kérjük le a modell outputját:
+
+```{r}
+lda_model
+```
+
+Új információ a csoportátlagok a bevont változók szerint, inkább informatív tartalmat hordoz.
+
+A koefficiensek azonban rendkívül fontosak! Úgy értelmezhetők, mint a béták egy regresszió esetén, vagyis értelmezhetővé teszik a modellt. A besorolás is e szerint végzendő el, mégpedig úgy, hogy végigszorozzuk az ismeretlen besorolású egyed értékeit és abbe a csoportba soroljuk, amelyiknek a legnagyobb az értéke. Ezt szerencsére nem kell kézzel elvégezni, az R megoldja magától.
+
+A modell teszteléséhez válasszunk le egy véletlen mintát az adatbázisból, majd a maradékon tanítsuk be az algoritmust.
+
+```{r}
+minta_index<-sample(c(1:nrow(adat)), 1000) # mintába kerülők sorszáma
+
+train<-adat[setdiff(c(1:nrow(adat)), minta_index),] # tanuló adatbázis
+test<-adat[minta_index,] # teszt adatbázis
+
+lda_model<-lda(matek_8~teltip7_th+t28+t29+csh_index+sex+hhh+t36+t5a+t39+t40b+t40c+t41+t48+t55a, data=train)
+
+lda_test<-predict(lda_model, test)$class
+
+table(test$matek_8, lda_test)
+
+sum(diag(table(test$matek_8, lda_test)))/sum(table(test$matek_8, lda_test))
+```
+
+## Kvadratikus diszkriminancia elemzés
+
+A lineáris diszkriminancia elemzés azt feltételezte, hogy a döntési határok lineárisak, ami eléggé kemény megkötés. A kvadratikus modell ezt a feltételt nem teszi fel, ahogy nincs feltételezés az azonos varianciákra és a normalitásra sem.
+
+Mivel nincsenek előzetes feltevéseink, ezért a modellek paramétereit a mintából nyert becslésekkel helyettesítjük, továbbá a valószínűségeket logaritmizáljuk.
+
+```{r}
+qda(matek_8~teltip7_th+t28+t29+csh_index+sex+hhh+t36+t5a+t39+t40b+t40c+t41+t48+t55a, data=adat)
+```
+
+A nem lineáris szeparáció sajnos azzal jár, hogy a modell részben elveszti azt az interpretálhatóságot, amit az LDA tartalmazott (koefficiensek), így nincsenek egyenleteink.
+
+Hasonlóan az előző példához, itt is végezzük el a predikciót.
+
+```{r}
+qda_model<-qda(matek_8~teltip7_th+t28+t29+csh_index+sex+hhh+t36+t5a+t39+t40b+t40c+t41+t48+t55a, data=train)
+
+qda_test<-predict(qda_model, test)$class
+
+table(test$matek_8, qda_test)
+
+sum(diag(table(test$matek_8, qda_test)))/sum(table(test$matek_8, qda_test))
+```
+
+
+# Szegmentációs algoritmusok
+
+A klasszikus particionáló algoritmusok úgynevezett felügyelő nélkül tanuló eljárások, amelyek célja, hogy mintázatokat ismerjenek fel egy nem strukturált adathalmazban. Az algoritmus a lehető leghomogénabb csoportbesosorolást hozza létre két feltétel mellett:
+
+1. Az egy szegmensbe tartozó elemek a lehető leghomogénebbek legyenek. A homogenitás többféleképpen is mérhető, de általában a szórás minimalizálásán alapulnak.
+2. A különböző csoportok a lehető legjobban különbözzenek egymástól. Ez leggyakrabban a csoportsúlypontok távolságainak maximalizálását jelenti.
+
+A homogenitás felfogható hasonlósági mértékként is, amely hasonlóságot a távolsággal szokás megadni (legtöbbször négyzetes euklideszi normát használva). Külön távolság metrikákat alkalmazunk a folytonos eloszlású adatokra (pl.: euklideszi), a diszkrét eloszlású adatokra (pl.: Jaccard), illetve a vegyes eloszlásúakra (pl.: Gower).
+
+### A gower-féle távolságmetrika
+
+Vegyes adattípusok (diszkrét és folytonos) közötti távolságmetrika. Legyen *i* és *j* két *p* dimenziós objektum. A kettő közötti gower-féle távolság a következő:
+
+$$
+S_{ij}=\frac {\sum_{k=1}^pw_{ijk}s_{ijk}} {\sum_{k=1}^pw_{ijk}}
+$$
+
+ahol,
+
+$w_{ijk}$: nem negatív súly (összege 1)
+$s_{ijk}$: hasonlóság két objektum között a *k*-adik dimenzióban
+
+Ha az két összehasonlított változó bináris vagy ordinális, akkor $s_{ijk}$ értéke 0 vagy 1, ha folytonos, akkor $s_{ijk}=1-\frac {|x_i-x_j|} {R_k}$, ahol $R_k$ a *k*-adik dimenzió terjedelme (csak normalizálási célokat szolgál). A végső távolságot az egyedi távolságok súlyozott átlaga adja meg, ahol a súly alapértelmezetten egyenletes.
+
+## A k-közép eljárás
+Az egyik legrégebben alkalmazott szegmentációs algoritmus. Hátránya, hogy előre meg kell adni, hogy mennyi particiót szeretnénk kialakítani.
+
+Legyen $s_j$ a *j*-edik klaszter középpontja, azaz $s_j=|C_j|^{-1} \sum x_j, \quad \forall x_j \in C_j$. Legyen *WSS* a veszteségfüggvény, azaz
+$$
+WSS_j=\sum ||x_j-s_j||_2^2
+$$
+
+Célunk a fenti veszteségfüggvény minimalizálása. Az algoritmus a következő:
+
+1. Vegyünk fel *k* darab klaszter tömegközéppontot egymástól távolabb véletlenszerűen.
+2. Soroljuk be nulladik lépésben a megfigyeléseket a legközelebbi halmazba.
+3. Újraszámoljuk a klaszter súlypontokat.
+4. Újra átsoroljuk a megfigyeléseket.
+5. A rendszer stabilizálódása után az algoritmus leáll.
+
+Mivel 72 ezer megfigyelésünk van 69 dimenzióban ezért túlságosan nagy számítókapacitást igényelne minden hallgató klaszterezése, ezért a könnyebbség kedvéért szűkítsük le a mintát csupán 1 megyére (12-es kódszámú, a legkisebb).
+
+```{r}
+adat2<-adat[adat$megye_kodja==12,]
+```
+
+Számoljuk ki a Gower-féle távolságot!
+```{r}
+tav<-daisy(adat2[,-c(1,2,64)]) # nincs szükségünk az azonosítószámokra és a megyekódra sem
+```
+
+A klaszterszám meghatározása kvázi intuitív folyamat. Minél többet alakítunk ki, annál homogénebbek lesznek a csoportok. Léteznek algoritmusok amelyek segítenek a döntésben. Ezek alapja jellemzően az, hogy mekkora homogenitási többletet érünk el egy új szegmens felvételével. Az új klaszterek hozadéka szinte minden esetben csökkenő.
+
+```{r}
+fviz_nbclust(adat2, kmeans, method = "silhouette", diss=tav)
+```
+
+Az optimális klaszterszám a 3 vagy 5. A nagy minta miatt érdemes lehet az 5 klasztert választani.
+
+```{r}
+kkozep<-kmeans(tav, centers = 5)
+kkozep$size # klaszterek elemszámai
+adat2$kkozep<-kkozep$cluster # mentsük el a besorolásokat
+```
+
+Vizsgáljuk meg az eredményeket néhány szemszögből!
+
+A matematika eredmények (sor) és a szegmensek (oszlop)
+```{r}
+table(adat2$matek_8, adat2$kkozep)
+```
+
+A fajlagos ráfordítás és a családi háttér index:
+
+```{r}
+ggplot(adat2, aes(x=csh_index, y=egy_diakra_mukodesi_kiadas_eFt_2019, colour=as.factor(kkozep))) + geom_point(size=2)
+```
+
+## k-NN algoritmus
+
+Az algoritmus egy klasszifikációs eljárás, amely bármekkora csoportszámra képest becslést adni arra nézve, hogy egy egyed mely kategóriába tartozhat. Formális leírása:
+
+$$
+P(y=c|x,D,K)=K^{-1}\sum I(y_i=c)
+$$
+
+ahol,
+
+c = egy osztály, ahol $c \in N$
+x = attribútumok, magyarázó változók
+D = tengely, amin x értelmezett
+K = legközelebbi pontok száma
+I = indikátor függvény, amelynek értéke 1, ha az állítás igaz, egyébként 0.
+
+![](https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/KnnClassification.svg/1024px-KnnClassification.svg.png)
+
+Végezzük el a kNN eljárást! Ez igényel némi adatelőkészítést.
+
+1. a tanuló adathalmaz nem tartalmazhatja a célváltozót, ezt külön vektorban kell megadni majd (matek_8, 8. oszlop)
+2. Értelemszerűen a teszt adatbázis sem tartalmazhatja.
+3. Hasonlóan a k-közép módszerhez, itt is meg kell adni a szomszédsági számot előre, de ehhez nincs igazán segítség. Jelen esetben adjunk meg 3-at
+
+```{r}
+k_nn<-knn(train[,-c(1,2,8)], test[,-c(1,2,8)], cl=train$matek_8, k=3)
+```
+
+Vizsgáljuk meg az eredményeket:
+
+```{r}
+table(test$matek_8, k_nn)
+
+sum(diag(table(test$matek_8, k_nn)))/sum(table(test$matek_8, k_nn))
+```
+
+## Naív-Bayes osztályozó
+Egy másik, nagyon egyszerű, de mégis hatékony osztályozó a Bayes klasszifikátor.
+
+Legyenek egy tanuló halmazon előre definiált osztályok, illetve az osztályok által részhalmazokba tartozó attribútumok (features). Ekkor a feltételes valószínűségi eloszlás ismert: $p(x|y=c_k)$, amiből levezethető a Bayes-tétel alapján, hogy:
+
+$$
+p(C_k|x)=\frac {p(C_k) p(x|C_k)} {p(x)}
+$$
+
+A Bayes feltételes valószínűség számlálója a következő többdimenziós feltételes eloszlással egyenlő:
+
+$$
+p(C_k)(p(x|C_k)=p(C_k, x_1, x_2, \dots, x_n)p(x_1|x_2, \dots, C_k)p(x_2, \dots, x_n, C_k) \dots
+$$
+
+Amiból az osztályba való tartozás a következőképpen becsülhető
+$$
+\hat{y}=argmax_K \text{ }p(C_k) \prod_{n=1}^p p(x_i|C_k)
+$$
+
+A modell minden osztályra becsül egy valószínűséget az *argmax* argumentum pedig kiválasztja belőle a legmagasabb értéket. A már korábban kialakított tanuló és tesztelő adatbázis segítségével végezzük el a becslést a matek_8 változóra.
+
+```{r}
+bayes<-naiveBayes(matek_8~.-1,-2, data=train)
+
+table(test$matek_8, predict(bayes, test))
+
+sum(diag(table(test$matek_8, predict(bayes, test))))/sum(table(test$matek_8, predict(bayes, test)))
+```
+
+# Változószelekciós, zsugorító eljárások
+## Statisztikai tanulás néhány alapfogalma
+
+Egy tanuló algoritmusnak általánosságban három komponense van:
+
+1. Egy $x\in \mathbb{R}^n$ véletlen vektor generátor (*G*), amely független mintát vesz egy ismeretlen, de nem változó $F(x)$ valószínűségi eloszlásból.
+2. Egy felügyelő (*S*), ami minden $x$ bemeneti adatra egy kimeneti $y$ output választ ad, egy szintén ismeretlen $F(y|x)$ feltételes eloszlás alapján.
+3. Egy tanuló gép (*learning machine - LM*), amely egy $f(x, \alpha)$, $\alpha \in \Lambda$ függvényt illeszt, amely a legjobb becslést adja az *S* felügyelő válaszára.
+
+A megfelelő függvény kiválasztása az $\ell$ tanuló adathalmaz alapján történik, amely elemei az $F(x,y)=F(x)F(x|y): (x_1,y_1),\dots,(x_{\ell},y_{\ell})$ alapján kerülnek kiválasztásra véletlen mintavétellel.
+
+Annak érdekében, hogy a legjobb függvényt meg tudjuk találni a $S$ becslésére, az $L(y,f(x,\alpha))$ **veszteségfüggvényt** kell alapul vegyük, ami az $y$ ($S$ válasza) és az *LM* által adott $f(x,\alpha)$ becsült válasz közötti eltérés. Tekintsük a veszteség várható értékét, amit a *risk-függvény* mutat meg:
+
+$$
+R(\alpha)=\int L(y, f(x,\alpha))dF(x,y)
+$$
+
+Célunk egy olyan $f(x, \alpha_0)$ függvény megtalálása, ami minimalizálja $R(\alpha)$-t egy olyan szituációban, mikor $F(x,y)$ nem ismert, csak a tanulóhalmazra lehet támaszkodni.
+
+Ahhoz, hogy a risk-függvényt minimalizálni tudjuk egy ismeretlen $F(z)$ valószínűségi mérték mellett, a következőt tehetjük:
+
+A risk-függvényt, cseréljük le az úgynevezett *empirikus risk-függvényre*, amit a tanuló minta alapján hozunk létre:
+$$
+R_e(\alpha)=\ell^{-1}\sum_{i=1}^{\ell}Q(z_i, \alpha)
+$$
+
+Ezután $Q(z, \alpha_0)$ függvényt, ami az $R(\alpha)$ risk-függvényt minimalizálja, $Q(z, \alpha_{\ell})$ függvénnyel közelítjük, ami a tapasztalati risk-függvényt minimalizálja. Ezzel az elvvel igazából a korábban bemutatott regressziót és klasszifikációs algoritmust kapjuk vissza, vagyis ezek a "korabeli" módszerek is a gépi tanulás osztályába tartoznak.
+
+Az ERM-elv azon a feltételezésen alapul, hogy $\ell/h>20$, vagyis a probléma bonyolultságához képest elegendő megfigyelés áll rendelkezésre. Ha $\ell/h$ értéke nagy, akkor $\mathcal{E}$ következésképp kicsi, azaz a tapasztalati risk-függvény értéke közel lesz a valós risk-függvény értékéhez, ami jó becslést biztosít. Ugyanakkor, ha $\ell/h<20$, akkor mindez nem garantált. Ahhoz, hogy a tanulási folyamat így is sikeres legyen, a VC dimenzió számát kontrollálni szükséges, vagyis a probléma bonyolultságát korlátozni kell. Egy $Q(z,\alpha), \alpha \in \Lambda$ valós függvényhalmaz VC dimenziója azon $z_1, \dots, z_h$ vektorok *h* maximális száma, amelyek a halmaz függvényei segítségével minden lehetséges módon ($2^h$) két osztályba sorolhatók. Az eljárás SRM néven vált ismertté.
+
+Legyen a szokásos $Q(z,\alpha), \alpha \in \Lambda$ valós függvényhalmaz, majd ennek vegyik $S_k$ "nyesett" részhalmazait, azaz $S_k= \{Q(z, \alpha),\alpha \in \Lambda_k \}$ és $S_1 \subset S_2 \subset \cdots \subset C_n \cdots S_k$ halmaz elemei kielégítik a következő két feltételt:
+
+1. Minden $S_k$ halmaz $h_k$ VC dimenziója véges, ezért az alábbi rendezés lehetséges: $h_1 \leq h_2 \leq \dots h_n\dots$.
+
+2. A struktúra bármely $S_k$ eleme két dolgot tartalmazhat:
+
+I. Teljesen korlátozott $Q(z,\alpha)$ függvényeket, azaz
+
+$$
+0 \leq Q(z,\alpha) \leq B, \alpha \in \Lambda_k
+$$
+
+VAGY
+
+II.
+
+olyan fügvényeket, amelyekre teljesül a következő egyenlőtlenség (bármely p, $\tau_k$ párra):
+
+$$
+\sup_{\alpha \in \Lambda_k} \frac {(\int Q^p(z,\alpha)dF(z))^{1/p}} {\int Q(z,\alpha) dF(z)} <\tau_k, p>2
+$$
+
+Ez az egyenlőtlenség a tanulási folyamat teljesítményét méri. 
+
+Amennyiben a fentiek teljesülnek, úgy a szerkezetet *elfogadható* struktúrának nevezzük. Az SRM a $z_1, \dots, z_{\ell}$ tanulómintán $Q(z, \alpha_{\ell}^k)$ függvényhalmazból "kiválasztja" azt a függvényt, ami minimalizálja az empirikus risk-függvényt $S_k$ halmazon. Az SRM-elv megteremti az átváltást az adott tanulóhalmazon végzett becslés minősége, valamint az approximációs függvény komplexitása között. Minél nagyobb az $S_n$ halmaz (minél komplexebb függvényeket tartalmaz), a tapasztalati risk minimuma úgy fög csökkenni, a becslés konfidencia intervalluma azonban szélesedni fog. Vagyis egyre nagyobb bizonytalanság mellett tudunk megoldani egyre komplexebb megoldásokat igénylő problémákat. A "trade-off" tehát itt az, hogy megtaláljuk az összhangot a két tulajdonság között.
+
+## Változószelekciós eljárások
+A változószelekciós eljárások az SRM elvét követik. A teljes modellből indulnak ki, de nem a változókat zárják ki, hanem a béta esztimátorok méretét csökkentik, annak árán, hogy így a modell ugyan torzít, de nincs jelentős információveszteség. Félút a drasztikus és a puha módszer között.
+
+Csak *standardizált* változókon működik, ezért az interpretációnál nagyon vigyázzunk: ceteris paribus 1 szórásnyi változás a prediktorban **átlagosan** bétányi szórással jár együtt a függő változóban.
+
+## Ridge regresszió
+A módszer a következő módosítást hajtja végre a hagyományos OLS regresszión:
+$$\hat{\beta}=(X'X+\lambda I)^{-1}X'y$$
+
+ahol,
+I: egy egységmátris
+$\lambda$: zsugorítási paraméter
+
+Vegyük észre, hogy $\lambda I$ egy X'X **diagonálisát** változtatja meg $\lambda$ paraméterrel. Az algoritmus iteratív, azaz különböző $\lambda$ értékeket kell kipróbálnunk.
+
+A módszer előbb a hagyományos OLS regresszió módszerével becslést ad $\beta$ értékére, majd ezeket az értékeket "zsugorítja" $\lambda$ paraméterrel. A cél, hogy a megváltozott $\beta$ értékek mellett minimalizáljuk az RSS értékét.
+$$\hat{\beta}^{ridge}=argmin_{\beta} \left\{\sum_{i=1}^N \left(y_i-\beta_0-\sum_{j=1}^p x_{ij}\beta_j \right)^2+\lambda \sum_{j=1}^p \beta_j^2 \right\}$$
+
+ahol,
+$\beta$: az OLS regresszió becslése
+
+Vagyük észre, hogy a halmaz első tagja maga az OLS regresszió RSS értéke.
+
+A fenti redge egyenletet másként is felírhatjuk optimumkereső függvényként is felírhatjuk:
+$$
+\hat{\beta}^{ridge}=min_{\beta} \sum_{i=1}^N \left(y_i-\beta_0-\sum_{j=1}^p x_{ij}\beta_j\right)^2, \\
+\sum_{j=1}^p \beta_j^2 \leq t
+$$
+
+*t* értékét előre meg kell határozni, bár inkább használatos az iteratív eljárás, amely során különböző *t*-ket próbálunk ki.
+
+Megjegyzések az algoritmushoz:
+* A módszer regresszióként működik, ezért a függő változó az exponenciális eloszláscsalád tagjai közül kell származzon
+* A függő változót külön változóban tároljuk, ne az adathalmaz részeként.
+* A magyarázó változókat *mátrixként* tároljuk el, szintén külön
+
+```{r}
+matek_8<-as.numeric(adat$matek_8) # poisson eloszlást fogunk alkalmazni
+ridge<-glmnet(y=matek_8, x=as.matrix(adat[,-c(1,2,8)]), family = "poisson", alpha = 0) # alpha=0 -> ridge regesszió
+```
+
+```{r}
+# ábrázoljuk a béta esztimátorok értékét különböző lambdák mellett
+plot(ridge, label = TRUE, xvar = "lambda")
+```
+
+Ahogy $\lambda \to +\infty$ úgy lesz egyra nagyobb a zsugorítás. Magas $\lambda$ értékeknél már mindegyik $\hat{\beta}$ értéke a nullához konvergál. Mivel az algoritmus standardizált adatokkal dolgozik, össze tudjuk hasonlítani a $\hat{\beta}$ értékeket. Minél nagyobb $|\hat{\beta}|$ értéke, a hozzá tartozó változó szorásának egységnyi növekedése átlagosan annál nagyobb szórásnövekedést jelent a függő változóban.
+
+A LASSO módszer egy módosított ridge regresszió:
+$$ \hat{\beta}^{LASSO}=min_{\beta} \sum_{i=1}^N \left(y_i-\beta_0-\sum_{j=1}^p x_{ij}\beta_j \right)^2 \\
+\sum_{j=1}^N |\beta_j| \leq t $$
+
+A módszer abban különbözik a ridge regressziótól, hogy ez utóbbiban $\sum_{j=1}^N \beta_j^2 \leq t$ egy $\ell_2$ probléma, addig $\sum_{j=1}^N |\beta_j| \leq t $ egy $\ell_1$ probléma, ami sokkal kevesebb megkötéssel jár.
+
+A programozási feladat a ridge módszerhez hasonlóan iteratív módon történik. Ha *t* értéke alacsony, akkor néhány $\hat{\beta}$ értéke nulla lehet, ezzel pedig a LASSO lényegében egy best subset szelekciót hajt végre. Ha $t_0 \geq \sum_{j=1}^N |\hat{\beta}^{OLS}|$, akkor a módszer az OLS eredményeit adja vissza. Ha viszont $t=t_0/2$, akkor a változók kb. fele elveszik.
+
+```{r}
+lasso<-glmnet(y=as.numeric(matek_8), x=as.matrix(adat[,-c(1,2,8)]), family = "poisson", alpha = 1) # alpha=1 -> LASSO
+
+# ábrázoljuk a béta esztimátorok értékét különböző lambdák mellett
+plot(lasso, label = TRUE, xvar = "lambda")
+```
+
+Köszönöm a figyelmet!
+
+peter.vakhal@uni-corvinus.hu
